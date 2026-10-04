@@ -1,0 +1,40 @@
+/*
+  EAPIS design tokens — "access terminal" system.
+  Concept: this is an access-control instrument, not a consumer SaaS product,
+  so the palette reads as a control-room panel (ink navy, hairline borders,
+  no soft drop shadows) rather than a card-and-gradient dashboard kit.
+  Severity colors (critical/high/medium/low) are kept close to convention
+  on purpose: a security tool is the one place where breaking the expected
+  red/amber/gold/green signal would hurt, not help, comprehension.
+*/
+:root {
+  /* surfaces */
+  --bg: #0D1117;
+  --panel: #151B24;
+  --panel-raised: #1B2330;
+  --border: #262F3F;
+  --border-strong: #37435A;
+
+  /* text */
+  --text: #E7ECF3;
+  --text-muted: #8D96A8;
+  --text-faint: #5C6577;
+
+  /* interactive accent — a signal teal, distinct from generic SaaS blue */
+  --accent: #3E93B8;
+  --accent-strong: #5CB3D6;
+  --accent-wash: rgba(62, 147, 184, 0.12);
+
+  /* severity scale */
+  --critical: #E5484D;
+  --high: #F0954A;
+  --medium: #E8C547;
+  --low: #6FA287;
+
+  /* type */
+  --font-sans: 'IBM Plex Sans', -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+
+  --radius-sm: 3px;
+  --radius-md: 5px;
+}
