@@ -14,11 +14,14 @@
 --                                         SoD/unused-access analysis")
 --   2. sp_detect_unused_access()       — granted-vs-used comparison over a
 --                                         rolling window, also CURSOR-driven,
---                                         excludes 'rare' frequency-tagged
---                                         permissions and newly-granted access
+--                                         covers direct AND inherited
+--                                         permissions, excludes 'rare'
+--                                         frequency-tagged permissions and
+--                                         newly-granted access
 --   3. sp_detect_anomalous_access()    — odd-hour, new-IP, volume-spike,
---                                         failed-then-success, and
---                                         out-of-granted-scope access,
+--                                         failed-then-success,
+--                                         out-of-granted-scope and
+--                                         cross-department access,
 --                                         each as a set-based INSERT..SELECT
 --   4. fn_calculate_risk_score()       — aggregates open findings per
 --                                         employee into a single risk score
@@ -190,11 +193,84 @@ BEGIN
 
     END LOOP;
     CLOSE grant_cursor;
+
+    -- ------------------------------------------------------------------
+    -- Pass 2: INHERITED permissions. An employee also holds every permission
+    -- of every ancestor of a role they were directly granted (role_hierarchy
+    -- DAG). Entitlement creep hides here too, so walk the DAG from each
+    -- active grant. The grant_id is carried through the recursion so the
+    -- grace period applies to the grant that actually brought the
+    -- inheritance in. A permission the employee ALSO holds directly is left
+    -- to pass 1 (no double-reporting).
+    -- ------------------------------------------------------------------
+    FOR v_row IN
+        WITH RECURSIVE anc AS (
+            SELECT er.grant_id, er.employee_id, er.role_id AS held_role_id, rh.parent_role_id AS role_id
+            FROM employee_roles er
+            JOIN role_hierarchy rh ON rh.child_role_id = er.role_id
+            WHERE er.status = 'active'
+              AND (er.expires_at IS NULL OR er.expires_at > now())
+              AND er.granted_at <= now() - (p_grace_days || ' days')::interval
+            UNION
+            SELECT a.grant_id, a.employee_id, a.held_role_id, rh.parent_role_id
+            FROM anc a
+            JOIN role_hierarchy rh ON rh.child_role_id = a.role_id
+        )
+        SELECT DISTINCT ON (a.employee_id, p.permission_id)
+               a.employee_id, a.grant_id, a.role_id, r.role_name, hr.role_name AS held_role_name,
+               p.permission_id, p.action, p.resource_type, p.risk_level
+        FROM anc a
+        JOIN roles r ON r.role_id = a.role_id
+        JOIN roles hr ON hr.role_id = a.held_role_id
+        JOIN role_permissions rp ON rp.role_id = a.role_id
+        JOIN permissions p ON p.permission_id = rp.permission_id
+        JOIN employees e ON e.employee_id = a.employee_id AND e.status = 'active'
+        WHERE p.expected_frequency <> 'rare'
+          AND NOT EXISTS (            -- also held directly -> reported by pass 1
+              SELECT 1 FROM employee_roles d
+              JOIN role_permissions drp ON drp.role_id = d.role_id
+              WHERE d.employee_id = a.employee_id AND d.status = 'active'
+                AND (d.expires_at IS NULL OR d.expires_at > now())
+                AND drp.permission_id = p.permission_id)
+        ORDER BY a.employee_id, p.permission_id, a.grant_id
+    LOOP
+        SELECT EXISTS (
+            SELECT 1 FROM access_logs al
+            JOIN resources res ON res.resource_id = al.resource_id
+            WHERE al.employee_id = v_row.employee_id
+              AND res.resource_type = v_row.resource_type
+              AND al.action = v_row.action
+              AND al.occurred_at >= now() - (p_window_days || ' days')::interval
+        ) INTO v_used;
+        CONTINUE WHEN v_used;
+
+        SELECT EXISTS (
+            SELECT 1 FROM findings
+            WHERE employee_id = v_row.employee_id
+              AND finding_type = 'unused_access'
+              AND status IN ('open', 'under_review')
+              AND (related_entity->>'permission_id')::INTEGER = v_row.permission_id
+        ) INTO v_already_open;
+
+        IF NOT v_already_open THEN
+            INSERT INTO findings (employee_id, finding_type, related_entity, severity, status, detected_at)
+            VALUES (
+                v_row.employee_id, 'unused_access',
+                jsonb_build_object(
+                    'grant_id', v_row.grant_id, 'role_id', v_row.role_id, 'role_name', v_row.role_name,
+                    'permission_id', v_row.permission_id, 'action', v_row.action,
+                    'resource_type', v_row.resource_type, 'window_days', p_window_days,
+                    'inherited', TRUE, 'held_role_name', v_row.held_role_name
+                ),
+                v_row.risk_level, 'open', now()
+            );
+        END IF;
+    END LOOP;
 END;
 $$;
 
 COMMENT ON PROCEDURE sp_detect_unused_access IS
-    'Flags active, non-rare permissions granted more than p_grace_days ago that have produced zero matching access_logs activity in the trailing p_window_days. Idempotent.';
+    'Flags active, non-rare permissions (directly granted AND inherited through the role_hierarchy DAG) granted more than p_grace_days ago that have produced zero matching access_logs activity in the trailing p_window_days. Idempotent.';
 
 
 -- ============================================================================
@@ -334,11 +410,40 @@ BEGIN
             AND (f.related_entity->>'log_id')::INTEGER = al.log_id
       );
 
+    -- (f) Cross-department access: a successful access to a resource whose
+    -- owner sits in a DIFFERENT department than the employee (Section 8c,
+    -- "access to a resource outside the employee's department"). Employees
+    -- who hold the Auditor role are exempt: reviewing other departments is
+    -- their job.
+    INSERT INTO findings (employee_id, finding_type, related_entity, severity, status, detected_at)
+    SELECT al.employee_id, 'anomalous_access',
+           jsonb_build_object('pattern', 'cross_department_access', 'log_id', al.log_id,
+                               'resource_id', al.resource_id, 'resource_name', res.resource_name,
+                               'employee_department', emp.department,
+                               'resource_department', own.department,
+                               'occurred_at', al.occurred_at),
+           'medium', 'open', now()
+    FROM access_logs al
+    JOIN employees emp ON emp.employee_id = al.employee_id
+    JOIN resources res ON res.resource_id = al.resource_id
+    JOIN employees own ON own.employee_id = res.owner_id
+    WHERE al.success = TRUE
+      AND al.occurred_at >= now() - (p_window_days || ' days')::interval
+      AND emp.department <> own.department
+      AND NOT EXISTS (SELECT 1 FROM fn_effective_roles(al.employee_id) er WHERE er.role_name = 'Auditor')
+      AND NOT EXISTS (
+          SELECT 1 FROM findings f
+          WHERE f.employee_id = al.employee_id AND f.finding_type = 'anomalous_access'
+            AND f.status IN ('open','under_review')
+            AND f.related_entity->>'pattern' = 'cross_department_access'
+            AND (f.related_entity->>'log_id')::INTEGER = al.log_id
+      );
+
 END;
 $$;
 
 COMMENT ON PROCEDURE sp_detect_anomalous_access IS
-    'Five anomaly patterns over the trailing window: odd-hour access, new/unrecognized IP, daily volume spikes, failed-then-success brute-force clustering, and access outside the employees granted permission scope. Idempotent.';
+    'Six anomaly patterns over the trailing window: odd-hour access, new/unrecognized IP, daily volume spikes, failed-then-success brute-force clustering, access outside the employees granted permission scope, and cross-department access. Idempotent.';
 
 
 -- ============================================================================

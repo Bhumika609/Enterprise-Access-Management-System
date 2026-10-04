@@ -40,7 +40,7 @@ async function main() {
     await bootstrapDemoPasswords();
   } catch (e) {
     console.error('\nThe database is reachable but the EAPIS tables were not found:', e.message);
-    console.error('Run the six SQL files (schema.sql ... api_views.sql) in this database first.\n');
+    console.error('Install the database first:  cd database && psql -d eapis -f install.sql\n');
     process.exit(1);
   }
 

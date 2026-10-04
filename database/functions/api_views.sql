@@ -187,7 +187,9 @@ SELECT f.finding_id,
        f.related_entity->>'role_name'                      AS role_name,
        f.related_entity->>'action'                         AS action,
        f.related_entity->>'resource_type'                  AS resource_type,
-       (f.related_entity->>'window_days')::INTEGER         AS window_days
+       (f.related_entity->>'window_days')::INTEGER         AS window_days,
+       COALESCE((f.related_entity->>'inherited')::BOOLEAN, FALSE) AS inherited,
+       f.related_entity->>'held_role_name'                 AS held_role_name
 FROM v_findings_detail f
 WHERE f.finding_type = 'unused_access';
 

@@ -554,3 +554,23 @@ WHERE (e.email = 'grace.kim@eapis-corp.example'   AND r.role_name = 'Payments Ad
 -- changes, and findings will be populated by the Phase 4 detection engine
 -- running against exactly the data planted above.
 -- ============================================================================
+-- ----------------------------------------------------------------------------
+-- (F) INHERITED UNUSED-ACCESS CASE
+-- "Senior Developer" has NO permissions of its own; it only inherits from
+-- Developer. Wei Zhang was given it 150 days ago but never writes source code,
+-- so the unused-access detector must find the problem by walking the DAG
+-- (entitlement creep hidden behind inheritance).
+-- ----------------------------------------------------------------------------
+INSERT INTO roles (role_name, description)
+VALUES ('Senior Developer', 'Inherits everything from Developer; adds no permissions of its own');
+
+INSERT INTO role_hierarchy (child_role_id, parent_role_id)
+SELECT (SELECT role_id FROM roles WHERE role_name = 'Senior Developer'),
+       (SELECT role_id FROM roles WHERE role_name = 'Developer');
+
+INSERT INTO employee_roles (employee_id, role_id, grant_type, granted_by, granted_at, is_temporary, status)
+SELECT (SELECT employee_id FROM employees WHERE email = 'wei.zhang@eapis-corp.example'),
+       (SELECT role_id FROM roles WHERE role_name = 'Senior Developer'),
+       'direct',
+       (SELECT employee_id FROM employees WHERE email = 'raj.patel@eapis-corp.example'),
+       now() - interval '150 days', FALSE, 'active';

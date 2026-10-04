@@ -126,6 +126,25 @@ const check = (name, cond, extra = '') => {
     check('viewer cannot launch a campaign -> 403', (await call('POST', '/api/recertification/campaigns', viewer, { name: 'x', start_date: '2026-01-01', end_date: '2026-02-01' })).status === 403);
     check('bad decision -> 400', (await call('POST', '/api/recertification/items/1/decision', manager, { decision: 'maybe' })).status === 400);
 
+    console.log('\nReports and extended detectors');
+    const cat = await call('GET', '/api/reports', auditor);
+    check('auditor can list the report catalogue', cat.status === 200 && cat.data.length === 5);
+    check('viewer cannot download reports -> 403', (await call('GET', '/api/reports/risk-scores', viewer)).status === 403);
+    check('unknown report -> 404', (await call('GET', '/api/reports/nope', admin)).status === 404);
+    const rs = await call('GET', '/api/reports/risk-scores', admin);
+    check('risk-scored employee report is sorted by risk, highest first',
+      rs.status === 200 && rs.data.rows[0].risk_score >= rs.data.rows[1].risk_score);
+    const csvRes = await fetch(base + '/api/reports/sod-conflicts?format=csv', { headers: { Authorization: `Bearer ${admin}` } });
+    const csv = await csvRes.text();
+    check('conflict report downloads as CSV with a header row',
+      csvRes.headers.get('content-type').startsWith('text/csv') && csv.split('\r\n')[0].includes('permission_a'));
+    const cs = await call('GET', '/api/reports/campaign-status', manager);
+    check('campaign status report has percent_complete', cs.data.rows.length >= 1 && 'percent_complete' in cs.data.rows[0]);
+    const anomalies = (await call('GET', '/api/findings?type=anomalous_access&limit=200', admin)).data.items;
+    check('cross-department access is detected', anomalies.some((f) => f.related_entity.pattern === 'cross_department_access'));
+    const unused = (await call('GET', '/api/unused-access', admin)).data;
+    check('inherited unused permission is detected through the DAG', unused.some((u) => u.inherited && u.full_name === 'Wei Zhang'));
+
     console.log('\nAdmin actions');
     check('non-admin cannot run detectors -> 403', (await call('POST', '/api/admin/run-detectors', manager)).status === 403);
     const rd = await call('POST', '/api/admin/run-detectors', admin);

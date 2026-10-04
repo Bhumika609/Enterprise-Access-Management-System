@@ -43,6 +43,16 @@ async function request(method, path, body) {
   return data;
 }
 
+// Authenticated file download (the browser can't attach the bearer token to a plain <a href>).
+export async function download(path, filename) {
+  const res = await fetch(`${BASE_URL}${path}`, { headers: authToken ? { Authorization: `Bearer ${authToken}` } : {} });
+  if (!res.ok) throw new ApiError(`Download failed (${res.status})`, res.status);
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+
 export const api = {
   get: (path) => request('GET', path),
   post: (path, body) => request('POST', path, body),

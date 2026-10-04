@@ -31,6 +31,7 @@ function buildApp() {
   api.use('/admin', require('./routes/admin'));
   api.use('/manage', require('./routes/manage'));
   api.use('/delegations', require('./routes/delegations'));
+  api.use('/reports', require('./routes/reports'));
   api.use('/', require('./routes/rbac'));
   api.use('/', require('./routes/findings'));
   api.use('/', require('./routes/logs'));

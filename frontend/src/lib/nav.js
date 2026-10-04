@@ -1,5 +1,5 @@
-// Single source of truth for sidebar navigation. Each future stage flips a
-// page from a placeholder onto a real route without touching AppShell.
+// Single source of truth for sidebar navigation. Routes live in App.jsx;
+// `roles` hides an item from roles that can't use it.
 export const NAV_SECTIONS = [
   {
     label: 'Overview',
@@ -22,6 +22,7 @@ export const NAV_SECTIONS = [
       { to: '/sod-violations', label: 'SoD Violations' },
       { to: '/unused-access', label: 'Unused Access' },
       { to: '/recertification', label: 'Recertification' },
+      { to: '/reports', label: 'Reports', roles: ['admin', 'auditor', 'manager'] },
     ],
   },
   {

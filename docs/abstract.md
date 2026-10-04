@@ -1,0 +1,11 @@
+# Abstract
+
+Organizations grant access to sensitive systems through employees, roles and permissions. Two problems silently accumulate: **entitlement creep** (people keep access they no longer use after changing teams or covering for colleagues) and **segregation-of-duties violations** (one person holding permissions that must never be combined, such as creating *and* approving a payment). Spreadsheets and static ACLs handle provisioning only; they cannot show whether access is still needed, dangerous in combination, or misused.
+
+The **Enterprise Access & Permission Intelligence System (EAPIS)** is a database-centric Identity & Access Management / GRC system. It models RBAC in PostgreSQL in third normal form, with a **multi-parent role hierarchy stored as a directed acyclic graph** (a junction table, guarded against cycles by a trigger). Recursive common table expressions resolve effective roles and permissions, which makes it possible to detect *indirect* conflicts that exist only through combined inheritance.
+
+On top of that model, a rule-driven detection engine written in PL/pgSQL finds SoD conflicts (rules are rows in `sod_conflict_rules`, not code), unused permissions over a rolling window (direct and inherited, with grace period and rare-use exclusions), anomalous behaviour (odd hours, new IPs, volume spikes, failed-then-success, out-of-scope and cross-department access) and break-glass use. Every detector writes into a single `findings` table; a per-employee risk score ranks the riskiest people.
+
+Lifecycle features — time-bound access with automatic expiry, emergency access with mandatory justification, delegation, request/approval workflow and periodic recertification campaigns — are implemented as constraints, triggers, procedures and `pg_cron` jobs, with every change recorded in an audit log that is separate from the access (usage) log.
+
+A thin REST API exposes database views and functions, and a React dashboard presents them like an enterprise security product. The frontend performs no analysis of its own. The result supports least-privilege enforcement and SOX / ISO 27001 / HIPAA-style audit evidence while demonstrating ER modelling, normalization, DAG-based hierarchical data, recursive querying and advanced PL/pgSQL.
